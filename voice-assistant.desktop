@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Voice Assistant
+Comment=Multilingual Voice Assistant
+Exec=xterm -e "/home/fawad/ai/va/run_gui.sh"
+Icon=
+Terminal=true
+Categories=Application;

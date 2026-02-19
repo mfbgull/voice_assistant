@@ -1,4 +1,29 @@
 #!/usr/bin/env python3
+"""
+Auto-activate virtual environment on Windows.
+"""
+import sys
+import os
+
+# Check if running in virtual environment
+_VENV_PREFIX = os.environ.get('VIRTUAL_ENV', '')
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_VENV_PYTHON = os.path.join(_SCRIPT_DIR, '.va-env', 'Scripts', 'python.exe')
+_VENV_PYTHON_ALT = os.path.join(_SCRIPT_DIR, 'va-env', 'Scripts', 'python.exe')
+
+# Find venv Python - use subprocess instead of execv for better Windows compatibility
+if not _VENV_PREFIX and sys.platform == 'win32':
+    for venv_python in [_VENV_PYTHON, _VENV_PYTHON_ALT]:
+        if os.path.exists(venv_python):
+            # Restart script with venv Python using subprocess
+            import subprocess
+            result = subprocess.run(
+                [venv_python, __file__] + sys.argv[1:],
+                cwd=_SCRIPT_DIR,
+                env={**os.environ, 'VIRTUAL_ENV': _SCRIPT_DIR}
+            )
+            sys.exit(result.returncode)
+
 import os
 import subprocess
 import numpy as np
@@ -36,7 +61,18 @@ def select_model():
             console.print("[red]No models found via 'ollama list'. Defaulting to 'llama3'.[/red]")
             return "llama3"
         # Assume each nonempty line represents one model.
-        models = [line.strip() for line in models_output.splitlines() if line.strip()]
+        # Skip the header line (NAME ID SIZE MODIFIED) and Parse just the model name
+        models_lines = [line.strip() for line in models_output.splitlines() if line.strip()]
+        if len(models_lines) > 0 and "NAME" in models_lines[0]:
+            models_lines = models_lines[1:]
+
+        models = []
+        for line in models_lines:
+             # Split by whitespace and take the first part (the model name)
+             parts = line.split()
+             if parts:
+                 models.append(parts[0])
+
         if not models:
             console.print("[red]No models parsed from 'ollama list'. Defaulting to 'llama3'.[/red]")
             return "llama3"
@@ -110,10 +146,28 @@ def speak(text):
     console.print(f"[yellow]Speaking:[/yellow] {text}")
     try:
         tts_model.tts_to_file(text=text, file_path=output_file)
-        # Play the audio (using 'aplay' for Linux; adjust as needed for your OS)
-        os.system("aplay " + output_file)
     except Exception as e:
-        console.print(f"[red]Error during TTS:[/red] {e}")
+        console.print(f"[red]Error during TTS generation:[/red] {e}")
+        return
+
+    # Play the audio using pygame (cross-platform)
+    try:
+        import pygame
+        pygame.mixer.init()
+        pygame.mixer.music.load(output_file)
+        pygame.mixer.music.play()
+        while pygame.mixer.music.get_busy():
+            pygame.time.Clock().tick(10)
+    except Exception as e:
+        console.print(f"[red]Error playing audio with pygame:[/red] {e}")
+        # Fallback to system command just in case
+        try:
+           if os.name == 'nt':
+               os.startfile(output_file)
+           else:
+               os.system("aplay " + output_file)
+        except:
+           pass
 
 # -------------------------------
 # 5. Enhanced UI Functions

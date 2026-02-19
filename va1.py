@@ -1,5 +1,29 @@
 #!/usr/bin/env python3
+"""
+Auto-activate virtual environment on Windows.
+"""
+import sys
 import os
+
+# Check if running in virtual environment
+_VENV_PREFIX = os.environ.get('VIRTUAL_ENV', '')
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_VENV_PYTHON = os.path.join(_SCRIPT_DIR, '.va-env', 'Scripts', 'python.exe')
+_VENV_PYTHON_ALT = os.path.join(_SCRIPT_DIR, 'va-env', 'Scripts', 'python.exe')
+
+# Find venv Python - use subprocess instead of execv for better Windows compatibility
+if not _VENV_PREFIX and sys.platform == 'win32':
+    for venv_python in [_VENV_PYTHON, _VENV_PYTHON_ALT]:
+        if os.path.exists(venv_python):
+            # Restart script with venv Python using subprocess
+            import subprocess
+            result = subprocess.run(
+                [venv_python, __file__] + sys.argv[1:],
+                cwd=_SCRIPT_DIR,
+                env={**os.environ, 'VIRTUAL_ENV': _SCRIPT_DIR}
+            )
+            sys.exit(result.returncode)
+
 import numpy as np
 import sounddevice as sd
 import torch

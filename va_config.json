@@ -1,0 +1,12 @@
+{
+  "model": "gemma3:270m",
+  "language": "en",
+  "input_mode": "voice",
+  "tts_enabled": true,
+  "tts_engine": "kitten",
+  "history_enabled": true,
+  "max_history": 10,
+  "wake_word_enabled": true,
+  "wake_word": "computer",
+  "api_key": ""
+}

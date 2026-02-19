@@ -1,0 +1,29 @@
+# Virtual environment
+va-env/
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Compiled Python files
+*.pyc
+
+# Audio files
+*.wav
+
+# Desktop environment
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
