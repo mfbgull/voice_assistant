@@ -53,10 +53,10 @@ def display_menu(options):
 
 def run_script(script):
     """
-    Run the selected script using the python command.
+    Run the selected script using the python3 command.
     """
     try:
-        result = subprocess.run(['python', script], check=True)
+        result = subprocess.run(['python3', script], check=True)
         return result.returncode
     except subprocess.CalledProcessError as e:
         print(f"Error running {script}: {e}")
