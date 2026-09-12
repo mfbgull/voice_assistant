@@ -802,6 +802,18 @@ def get_engine_display_info() -> Dict[str, str]:
             "quality": "Standard",
             "runtime": "PyTorch",
         }
+    elif engine == "sanotts" and _SANOTTS_AVAILABLE:
+        try:
+            sn_ver = importlib.metadata.version('sanotts')
+        except Exception:
+            sn_ver = "?"
+        return {
+            "name": f"sanoTTS v{sn_ver}",
+            "model": "Piperlite voices (1.4M params)",
+            "langs": "Multilingual (piperlite)",
+            "quality": "22.05kHz · numpy-only",
+            "runtime": "ONNX · on-device",
+        }
     else:  # gtts
         return {
             "name": "Google gTTS",
