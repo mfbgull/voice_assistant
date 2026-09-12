@@ -1,4 +1,4 @@
-#!/home/fawad/voice_assistant/va-env/bin/python3.11
+#!/home/fawad/ai/va/va-env/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys

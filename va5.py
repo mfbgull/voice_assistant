@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Optional, List, Dict
 from dataclasses import dataclass, field, asdict
 from functools import lru_cache
+import importlib.metadata
 
 # Try to import gTTS for multilingual fallback
 try:
@@ -61,6 +62,14 @@ except ImportError:
     _KITTENTTS_AVAILABLE = False
     pass
 
+# Try to import Supertonic (lightning-fast on-device multilingual TTS)
+try:
+    from supertonic import TTS as SupertonicTTS
+    _SUPER_TONIC_AVAILABLE = True
+except ImportError:
+    _SUPER_TONIC_AVAILABLE = False
+    pass
+
 # Try to import Anthropic for Claude models
 try:
     from anthropic import Anthropic
@@ -74,11 +83,25 @@ import sounddevice as sd
 import torch
 from faster_whisper import WhisperModel
 import ollama
-from TTS.api import TTS
+
+# Try to import Coqui TTS (may not be available on Python 3.12+)
+try:
+    from TTS.api import TTS
+    _COQUI_TTS_AVAILABLE = True
+except ImportError:
+    _COQUI_TTS_AVAILABLE = False
+    TTS = None
+
+# Try to import sanotts (sanoTTS) - numpy-only TTS
+try:
+    import sanotts
+    _SANOTTS_AVAILABLE = True
+except ImportError:
+    _SANOTTS_AVAILABLE = False
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
-from rich.text import Text
 from rich.live import Live
 from rich.spinner import Spinner
 from rich.style import Style
@@ -113,6 +136,12 @@ LANGUAGES = {
     "ps": {"name": "Pashto", "code": "ps", "tts": "ps"},
 }
 
+# Supertonic 3 supported language codes (verified at runtime)
+SUPERTONIC_LANGUAGES = {"en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el",
+                        "es", "et", "fi", "fr", "hi", "hr", "hu", "id", "it",
+                        "lt", "lv", "nl", "pl", "pt", "ro", "ru", "sk", "sl",
+                        "sv", "tr", "uk", "vi"}
+
 @dataclass
 class ConversationMessage:
     """Represents a single message in the conversation."""
@@ -127,7 +156,7 @@ class AppConfig:
     language: str = "en"
     input_mode: str = "text"
     tts_enabled: bool = True
-    tts_engine: str = "whisper"  # 'whisper' (Coqui) or 'kitten'
+    tts_engine: str = "supertonic"  # 'whisper' (Coqui), 'kitten', 'supertonic', 'gtts', or 'sanotts'
     history_enabled: bool = True
     max_history: int = 10
     wake_word_enabled: bool = True
@@ -139,6 +168,7 @@ state = {
     "stt_model": None,
     "tts_model": None,
     "kitten_tts": None,
+    "supertonic_tts": None,
     "selected_model": None,
     "current_mode": "text",
     "current_language": "en",
@@ -319,6 +349,20 @@ def init_kitten_tts():
                 return None
     return state["kitten_tts"]
 
+def init_supertonic_tts():
+    """Initialize Supertonic TTS model with loading indicator."""
+    if state["supertonic_tts"] is None:
+        if not _SUPER_TONIC_AVAILABLE:
+            console.print("[red]Error: Supertonic library not found. Install with: pip install supertonic[/red]")
+            return None
+        with show_loading("Loading Supertonic TTS (99M multilingual model)..."):
+            try:
+                state["supertonic_tts"] = SupertonicTTS(auto_download=True)
+            except Exception as e:
+                console.print(f"[red]Error initializing Supertonic TTS: {e}[/red]")
+                return None
+    return state["supertonic_tts"]
+
 # ===============================
 # Wake Word Detection
 # ===============================
@@ -461,17 +505,56 @@ def select_language():
 def select_tts_engine():
     """Let user select TTS engine."""
     clear_screen()
-    panel = Panel(
-        """[bold cyan]Select TTS Engine[/bold cyan]
+    
+    panel_text = """[bold cyan]Select TTS Engine[/bold cyan]
 
-[bold]1.[/bold] Whisper (Coqui TTS) - High quality, slower
-[bold]2.[/bold] KittenTTS (80M Model) - Fast, realistic, CPU optimized""",
-        title="TTS Selection",
-        border_style="magenta"
-    )
+[bold]1.[/bold] Supertonic (99M multilingual) - [green]Recommended[/green] Fast, 31 languages, on-device
+[bold]2.[/bold] KittenTTS (80M) - Fast, realistic, CPU optimized"""
+    
+    if _COQUI_TTS_AVAILABLE:
+        panel_text += """
+[bold]3.[/bold] Whisper (Coqui TTS) - High quality, slower"""
+        panel_text += """
+[bold]4.[/bold] Google gTTS - Clear but requires internet"""
+        default_choice = "1"
+        choices_list = ["1", "2", "3", "4"]
+    else:
+        panel_text += """
+[bold]3.[/bold] Google gTTS - Clear but requires internet"""
+        panel_text += """
+[dim]Note: Coqui TTS not available on Python 3.12+[/dim]"""
+        default_choice = "1"
+        choices_list = ["1", "2", "3"]
+    
+    if not _SUPER_TONIC_AVAILABLE:
+        panel_text = panel_text.replace("[bold]1.[/bold] Supertonic (99M multilingual) - [green]Recommended[/green] Fast, 31 languages, on-device",
+                                         "[bold]1.[/bold] Supertonic [dim](not installed - pip install supertonic)[/dim]")
+    
+    # Add sanotts option if available
+    if _SANOTTS_AVAILABLE:
+        panel_text += """
+[bold]5.[/bold] sanotts (sanoTTS) - Lightweight, numpy-only, ~1.4M params"""
+        choices_list = ["1", "2", "3", "4", "5"]
+    else:
+        choices_list = ["1", "2", "3", "4"]
+    
+    panel = Panel(panel_text, title="TTS Selection", border_style="magenta")
     console.print(panel)
-    choice = Prompt.ask("Enter choice", choices=["1", "2"], default="2")
-    engine = "whisper" if choice == "1" else "kitten"
+    choice = Prompt.ask("Enter choice", choices=choices_list, default=default_choice)
+    
+    if choice == "1":
+        engine = "supertonic"
+    elif choice == "2":
+        engine = "kitten"
+    elif choice == "3":
+        engine = "whisper" if _COQUI_TTS_AVAILABLE else "gtts"
+    elif choice == "4":
+        engine = "gtts"
+    elif _SANOTTS_AVAILABLE and choice == "5":
+        engine = "sanotts"
+    else:
+        engine = "gtts"
+    
     state["config"].tts_engine = engine
     save_config(state["config"])
     return engine
@@ -532,19 +615,37 @@ def clean_text_for_tts(text: str) -> str:
 def speak(text: str):
     """Convert text to speech and play it."""
     if not text or not state["config"].tts_enabled: return
-    text = clean_text_for_tts(text)
-    if len(text) < 2: return
     
+    # Supertonic supports multilingual text natively (including non-ASCII),
+    # so skip ASCII-only cleaning for it
+    if state["config"].tts_engine == "supertonic":
+        cleaned_text = " ".join(text.split()).strip()
+    else:
+        cleaned_text = clean_text_for_tts(text)
+    
+    if len(cleaned_text) < 2: return
+
     output_file = "response.wav"
     console.print(f"[yellow]🔊 Speaking ({state['config'].tts_engine})...[/yellow]")
 
-    if state["config"].tts_engine == "kitten" and _KITTENTTS_AVAILABLE:
-        _speak_kitten(text, output_file)
+    if state["config"].tts_engine == "supertonic" and _SUPER_TONIC_AVAILABLE:
+        _speak_supertonic(cleaned_text, output_file)
+    elif state["config"].tts_engine == "kitten" and _KITTENTTS_AVAILABLE:
+        _speak_kitten(cleaned_text, output_file)
+    elif state["config"].tts_engine == "gtts" and _GTTS_AVAILABLE:
+        _speak_gtts(cleaned_text, output_file)
+    elif state["config"].tts_engine == "sanotts" and _SANOTTS_AVAILABLE:
+        _speak_sano(cleaned_text, output_file)
     else:
-        _speak_whisper(text, output_file)
+        _speak_whisper(cleaned_text, output_file)
 
 def _speak_whisper(text, output_file):
     """Coqui TTS (Whisper labeled)."""
+    if not _COQUI_TTS_AVAILABLE:
+        console.print("[dim]⚠ Coqui TTS not available (Python 3.12+ incompatibility)[/dim]")
+        if _GTTS_AVAILABLE:
+            _speak_gtts(text, output_file)
+        return
     if state["current_language"] != "en" and _GTTS_AVAILABLE:
         _speak_gtts(text, output_file)
         return
@@ -556,6 +657,33 @@ def _speak_whisper(text, output_file):
     except Exception as e:
         console.print(f"[red]TTS Error: {e}[/red]")
 
+def _speak_sano(text, output_file):
+    """sanoTTS (sanoTTS) - Lightweight, numpy-only TTS engine.
+    
+    Uses the sanotts Synthesizer with default voices.
+    Voices available: amy, kristin, hfc, id, vi (piperlite) and nano voices.
+    """
+    if not _SANOTTS_AVAILABLE:
+        console.print("[dim]⚠ sanotts library not available[/dim]")
+        return
+    
+    try:
+        with console.status("[bold yellow]Generating sanotts TTS...", spinner="dots"):
+            # Use a default piperlite voice (amy is commonly available)
+            synth = sanotts.Synthesizer(voice="amy")
+            result = synth.synthesize(text)
+            
+            # audio is already a numpy float32 array in [-1, 1]
+            audio = result.audio
+            
+            # Ensure audio is saved at good quality
+            sf.write(output_file, audio, result.sample_rate)
+        _play_audio(output_file)
+    except Exception as e:
+        console.print(f"[red]sanotts TTS Error: {e}[/red]")
+        # Fall back to whisper/Coqui TTS
+        _speak_whisper(text, output_file)
+
 def _speak_kitten(text, output_file):
     """KittenTTS."""
     kitten = init_kitten_tts()
@@ -564,13 +692,64 @@ def _speak_kitten(text, output_file):
         return
     try:
         with console.status("[bold yellow]Generating KittenTTS...", spinner="dots"):
-            # The library generate method might work now with the right voices.npz
-            audio = kitten.generate(text, voice='expr-voice-2-m')
+            # Try different voices for better quality
+            # Available voices: 'voice-1', 'voice-2', 'expr-voice-1', 'expr-voice-2', 'expr-voice-2-m'
+            # 'voice-1' and 'voice-2' are cleaner, 'expr-*' are more expressive but may have more noise
+            audio = kitten.generate(text, voice='voice-1')
+            
+            # Normalize audio to reduce noise
+            import numpy as np
+            audio = np.array(audio, dtype=np.float32)
+            
+            # Apply simple normalization
+            max_amp = np.max(np.abs(audio))
+            if max_amp > 0:
+                audio = audio * 0.75 / max_amp  # Normalize to 75% to prevent clipping
+            
+            # Apply gentle low-pass filter to reduce high-frequency noise
+            # Simple moving average filter
+            window_size = 3
+            if len(audio) > window_size:
+                audio = np.convolve(audio, np.ones(window_size)/window_size, mode='same')
+            
+            # Save at higher quality (24kHz is good for speech)
             sf.write(output_file, audio, 24000)
         _play_audio(output_file)
     except Exception as e:
         console.print(f"[red]KittenTTS Error: {e}[/red]")
         _speak_whisper(text, output_file)
+
+def _speak_supertonic(text, output_file):
+    """Supertonic TTS - fast on-device multilingual."""
+    tts = init_supertonic_tts()
+    if not tts:
+        _speak_gtts(text, output_file)
+        return
+    
+    # Map current language to Supertonic language code
+    lang_code = state["current_language"]
+    if lang_code not in SUPERTONIC_LANGUAGES:
+        # Use language-agnostic mode for unsupported languages (ur, ps, etc.)
+        lang_code = "na"
+    
+    try:
+        with console.status("[bold yellow]Generating Supertonic TTS...", spinner="dots"):
+            style = tts.get_voice_style(voice_name="M1")
+            wav, duration = tts.synthesize(
+                text=text,
+                lang=lang_code,
+                voice_style=style,
+                total_steps=8,
+                speed=1.05
+            )
+            tts.save_audio(wav, output_file)
+        _play_audio(output_file)
+    except Exception as e:
+        console.print(f"[red]Supertonic TTS Error: {e}[/red]")
+        # Fallback to gTTS
+        if _GTTS_AVAILABLE:
+            console.print("[yellow]Falling back to gTTS...[/yellow]")
+            _speak_gtts(text, output_file)
 
 def _speak_gtts(text, output_file):
     """Google TTS."""
@@ -591,31 +770,150 @@ def _play_audio(file):
         subprocess.run(['aplay', file])
 
 # ===============================
-# Main Loop
+# Engine & System Info Display
 # ===============================
+def get_engine_display_info() -> Dict[str, str]:
+    """Return engine-specific display info (name, model, features)."""
+    engine = state["config"].tts_engine
+    
+    if engine == "supertonic" and _SUPER_TONIC_AVAILABLE:
+        try:
+            st_ver = importlib.metadata.version('supertonic')
+        except Exception:
+            st_ver = "?"
+        return {
+            "name": f"Supertonic v{st_ver}",
+            "model": "99M multilingual ONNX",
+            "langs": "31 languages",
+            "quality": "44.1kHz · studio-grade",
+            "runtime": "ONNX · on-device",
+        }
+    elif engine == "kitten":
+        return {
+            "name": "KittenTTS",
+            "model": "KittenML/kitten-tts-mini-0.8",
+            "langs": "English only",
+            "quality": "24kHz · CPU optimized",
+            "runtime": "ONNX · on-device",
+        }
+    elif engine == "whisper":
+        return {
+            "name": "Coqui TTS",
+            "model": "tacotron2-DDC",
+            "langs": "English only",
+            "quality": "Standard",
+            "runtime": "PyTorch",
+        }
+    else:  # gtts
+        return {
+            "name": "Google gTTS",
+            "model": "Cloud TTS",
+            "langs": "Multilingual",
+            "quality": "Standard · requires internet",
+            "runtime": "Cloud API",
+        }
+
+def get_system_status() -> Dict[str, str]:
+    """Return current system status indicators."""
+    status = {}
+    
+    # LLM model
+    status["llm"] = state["selected_model"] or "None"
+    
+    # Wake word
+    ww = state["config"].wake_word
+    if ww and state["config"].wake_word_enabled:
+        status["wake_word"] = f'"{ww}" 🟢'
+    elif ww and not state["config"].wake_word_enabled:
+        status["wake_word"] = "Disabled"
+    else:
+        status["wake_word"] = "None"
+    
+    # History
+    hcount = len(state["conversation_history"]) // 2
+    status["history"] = f"{hcount} exchanges"
+    
+    # Ollama status
+    ollama_ok = check_ollama_connection()
+    status["ollama"] = "🟢 Connected" if ollama_ok else "🔴 Disconnected"
+    
+    return status
+
 def display_banner():
+    """Display the main UI banner with engine and system info."""
     clear_screen()
     config = state["config"]
+    
+    # Gather display data
+    engine_info = get_engine_display_info()
+    sys_status = get_system_status()
+    
+    lang_name = LANGUAGES.get(state["current_language"], {}).get("name", "Unknown")
+    lang_code = state["current_language"]
+    
+    # Engine features bar
+    features = engine_info.get("quality", "") + "  ·  " + engine_info.get("runtime", "")
+    if engine_info.get("langs"):
+        features = engine_info["langs"] + "  ·  " + features
+    
+    # Build banner content
+    banner_content = (
+        f"[bold cyan]🎙️  V O I C E   A S S I S T A N T   v2.1[/bold cyan]\n"
+        f"[dim]─[/dim]" * 48 + "\n\n"
+        f"[bold]TTS Engine:[/bold]    [green]{engine_info['name']}[/green]\n"
+        f"[bold]Model:[/bold]          [yellow]{engine_info['model']}[/yellow]\n"
+        f"[bold]Features:[/bold]       [dim]{features}[/dim]\n"
+        f"\n"
+        f"[bold]Language:[/bold]       {lang_name} [dim]({lang_code})[/dim]\n"
+        f"[bold]Input Mode:[/bold]     {'🎤 Voice' if state['current_mode'] == 'voice' else '⌨️ Text'}\n"
+        f"[bold]LLM Model:[/bold]      [magenta]{sys_status['llm']}[/magenta]\n"
+        f"\n"
+        f"[bold]Wake Word:[/bold]      {sys_status['wake_word']}\n"
+        f"[bold]History:[/bold]        {sys_status['history']}\n"
+        f"[bold]Ollama:[/bold]         {sys_status['ollama']}\n"
+    )
+    
+    # Adapt panel width to terminal size, cap at 54
+    term_width = shutil.get_terminal_size().columns
+    panel_width = min(term_width - 2, 54)
+    
     banner = Panel(
-        Text(f"""🎙️ VOICE ASSISTANT v2.1
-Engine: {config.tts_engine.upper()}
-Mode: {state['current_mode'].upper()}""", justify="center", style="bold cyan"),
-        title="Welcome",
-        border_style="blue"
+        banner_content,
+        title="[bold blue]Dashboard[/bold blue]",
+        border_style="blue",
+        padding=(1, 2),
+        width=panel_width
     )
     console.print(banner)
+
+def select_input_mode():
+    """Let user select input mode."""
+    clear_screen()
+    panel = Panel(
+        """[bold cyan]Select Input Mode[/bold cyan]
+
+[bold]1.[/bold] Text Input - Type your queries
+[bold]2.[/bold] Voice Input - Speak your queries (requires microphone)""",
+        title="Input Mode Selection",
+        border_style="cyan"
+    )
+    console.print(panel)
+    choice = Prompt.ask("Enter mode number", choices=["1", "2"], default="2")
+    mode = "text" if choice == "1" else "voice"
+    console.print(f"[bold cyan]Selected Input Mode:[/bold cyan] {mode.upper()}")
+    return mode
 
 def main():
     state["config"] = load_config()
     display_banner()
-    
+
     # Selection Flow
     state["selected_model"] = select_model()
     state["current_language"] = select_language()
     state["config"].tts_engine = select_tts_engine()
-    state["current_mode"] = "voice" if Prompt.ask("Input Mode", choices=["1", "2"], default="2") == "2" else "text"
+    state["current_mode"] = select_input_mode()
     wake = select_wake_word()
-    
+
     save_config(state["config"])
 
     while state["running"]:
