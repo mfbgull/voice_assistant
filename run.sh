@@ -30,6 +30,8 @@ echo "  1. va1.py - Basic version"
 echo "  2. va2.py - Enhanced (recommended)"
 echo "  3. va3.py - Model selector version"
 echo "  4. va4.py - Legacy version"
+echo "  5. va5.py - New version"
+echo "  6. va.py - Basic (default)"
 echo ""
 echo "  q. Quit"
 echo ""
@@ -42,6 +44,8 @@ case "$choice" in
     2) "$PYTHON_PATH" "$SCRIPT_DIR/va2.py" ;;
     3) "$PYTHON_PATH" "$SCRIPT_DIR/va3.py" ;;
     4) "$PYTHON_PATH" "$SCRIPT_DIR/va4.py" ;;
+    5) "$PYTHON_PATH" "$SCRIPT_DIR/va5.py" ;;
+    6) "$PYTHON_PATH" "$SCRIPT_DIR/va.py" ;;
     q|Q) echo "Goodbye!"; exit 0 ;;
     *) echo "Invalid choice!"; exit 1 ;;
 esac
