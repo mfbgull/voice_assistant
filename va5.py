@@ -534,9 +534,7 @@ def select_tts_engine():
     if _SANOTTS_AVAILABLE:
         panel_text += """
 [bold]5.[/bold] sanotts (sanoTTS) - Lightweight, numpy-only, ~1.4M params"""
-        choices_list = ["1", "2", "3", "4", "5"]
-    else:
-        choices_list = ["1", "2", "3", "4"]
+        choices_list.append("5")
     
     panel = Panel(panel_text, title="TTS Selection", border_style="magenta")
     console.print(panel)
